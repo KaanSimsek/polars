@@ -414,7 +414,9 @@ impl ExprOrderSimplifier<'_> {
 
                 let function = *function;
                 let partition_by_len = partition_by.len();
-                let order_by = order_by.as_ref().map(|(node, _)| *node);
+                let order_by_nodes: Vec<Node> = order_by
+                    .as_ref()
+                    .map_or(vec![], |(nodes, _)| nodes.clone());
 
                 let observable_in_function = self.rec(function, RS::NO_DEORDER);
                 let observable_in_partition_by = (0..partition_by_len)
@@ -427,8 +429,10 @@ impl ExprOrderSimplifier<'_> {
                         self.rec(partition_by[i], RS::NO_DEORDER)
                     })
                     .fold(O::empty(), |acc, v| acc | v);
-                let observable_in_order_by =
-                    order_by.map_or(O::empty(), |node| self.rec(node, RS::NO_DEORDER));
+                let observable_in_order_by = order_by_nodes
+                    .iter()
+                    .map(|&node| self.rec(node, RS::NO_DEORDER))
+                    .fold(O::empty(), |acc, v| acc | v);
 
                 let acc_observable =
                     observable_in_function | observable_in_partition_by | observable_in_order_by;

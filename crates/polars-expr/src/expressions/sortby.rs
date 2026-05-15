@@ -53,6 +53,24 @@ fn check_groups(a: &GroupsType, b: &GroupsType) -> PolarsResult<()> {
     Ok(())
 }
 
+pub(super) fn update_groups_sort_by_multiple(
+    groups: &GroupsType,
+    sort_by_s: &[Series],
+    descending: &[bool],
+    nulls_last: &[bool],
+) -> PolarsResult<GroupsType> {
+    let sort_by_s: Vec<Series> = sort_by_s.iter().map(|s| s.rechunk()).collect();
+    let groups = RAYON.install(|| {
+        groups
+            .par_iter()
+            .map(|indicator| {
+                sort_by_groups_multiple_by(indicator, &sort_by_s, descending, nulls_last, false, false)
+            })
+            .collect::<PolarsResult<_>>()
+    })?;
+    Ok(GroupsType::Idx(groups))
+}
+
 pub(super) fn update_groups_sort_by(
     groups: &GroupsType,
     sort_by_s: &Series,

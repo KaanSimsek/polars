@@ -96,8 +96,10 @@ macro_rules! push_expr {
                 order_by,
                 ..
             } => {
-                if let Some((order_by, _)) = order_by {
-                    $push($c, order_by);
+                if let Some((order_by_exprs, _)) = order_by {
+                    for e in order_by_exprs.into_iter().rev() {
+                        $push_owned($c, e);
+                    }
                 }
                 for e in partition_by.into_iter().rev() {
                     $push_owned($c, e)

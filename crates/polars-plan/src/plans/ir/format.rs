@@ -367,8 +367,8 @@ impl Display for ExprIRDisplay<'_> {
             } => {
                 let function = self.with_root(function);
                 let partition_by = self.with_slice(partition_by);
-                if let Some((order_by, _)) = order_by {
-                    let order_by = self.with_root(order_by);
+                if let Some((order_by_nodes, _)) = order_by {
+                    let order_by = self.with_slice(order_by_nodes);
                     write!(
                         f,
                         "{function}.over(partition_by: {partition_by}, order_by: {order_by})"

@@ -71,8 +71,10 @@ impl AExpr {
                 for node in partition_by {
                     validate_expr(*node, ctx)?;
                 }
-                if let Some((node, _)) = order_by {
-                    validate_expr(*node, ctx)?;
+                if let Some((nodes, _)) = order_by {
+                    for node in nodes {
+                        validate_expr(*node, ctx)?;
+                    }
                 }
 
                 let e = ctx.arena.get(*function);

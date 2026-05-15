@@ -26,7 +26,7 @@ pub struct WindowExpr {
     /// the root column that the Function will be applied on.
     /// This will be used to create a smaller DataFrame to prevent taking unneeded columns by index
     pub(crate) group_by: Vec<Arc<dyn PhysicalExpr>>,
-    pub(crate) order_by: Option<(Arc<dyn PhysicalExpr>, SortOptions)>,
+    pub(crate) order_by: Option<(Vec<Arc<dyn PhysicalExpr>>, SortMultipleOptions)>,
     pub(crate) apply_columns: Vec<PlSmallStr>,
     pub(crate) phys_function: Arc<dyn PhysicalExpr>,
     pub(crate) mapping: WindowMapping,
@@ -343,8 +343,8 @@ impl WindowExpr {
 }
 
 // Utility to create partitions and cache keys
-pub fn window_function_format_order_by(to: &mut String, e: &Expr, k: &SortOptions) {
-    write!(to, "_PL_{:?}{}_{}", e, k.descending, k.nulls_last).unwrap();
+pub fn window_function_format_order_by(to: &mut String, e: &Expr, descending: bool, nulls_last: bool) {
+    write!(to, "_PL_{:?}{}_{}", e, descending, nulls_last).unwrap();
 }
 
 impl PhysicalExpr for WindowExpr {
@@ -433,11 +433,20 @@ impl PhysicalExpr for WindowExpr {
             let gb = df.group_by_with_series(group_by_columns.clone(), true, sort_groups)?;
             let mut groups = gb.into_groups();
 
-            if let Some((order_by, options)) = &self.order_by {
-                let order_by = order_by.evaluate(df, state)?;
-                polars_ensure!(order_by.len() == df.height(), ShapeMismatch: "the order by expression evaluated to a length: {} that doesn't match the input DataFrame: {}", order_by.len(), df.height());
-                groups = update_groups_sort_by(&groups, order_by.as_materialized_series(), options)?
-                    .into_sliceable()
+            if let Some((order_by_exprs, options)) = &self.order_by {
+                let mut series_vec: Vec<Series> = Vec::with_capacity(order_by_exprs.len());
+                for e in order_by_exprs {
+                    let col = e.evaluate(df, state)?;
+                    polars_ensure!(col.len() == df.height(), ShapeMismatch: "the order by expression evaluated to a length: {} that doesn't match the input DataFrame: {}", col.len(), df.height());
+                    series_vec.push(col.as_materialized_series().rechunk());
+                }
+                groups = update_groups_sort_by_multiple(
+                    &groups,
+                    &series_vec,
+                    &options.descending,
+                    &options.nulls_last,
+                )?
+                .into_sliceable()
             }
 
             let out: PolarsResult<GroupPositions> = Ok(groups);
@@ -451,14 +460,18 @@ impl PhysicalExpr for WindowExpr {
             for s in &group_by_columns {
                 cache_key.push_str(s.name());
             }
-            if let Some((e, options)) = &self.order_by {
-                let e = match e.as_expression() {
-                    Some(e) => e,
-                    None => {
-                        polars_bail!(InvalidOperation: "cannot order by this expression in window function")
-                    },
-                };
-                window_function_format_order_by(&mut cache_key, e, options)
+            if let Some((exprs, options)) = &self.order_by {
+                for (i, e) in exprs.iter().enumerate() {
+                    let expr = match e.as_expression() {
+                        Some(expr) => expr,
+                        None => {
+                            polars_bail!(InvalidOperation: "cannot order by this expression in window function")
+                        },
+                    };
+                    let descending = options.descending.get(i).or_else(|| options.descending.first()).copied().unwrap_or(false);
+                    let nulls_last = options.nulls_last.get(i).or_else(|| options.nulls_last.first()).copied().unwrap_or(false);
+                    window_function_format_order_by(&mut cache_key, expr, descending, nulls_last);
+                }
             }
 
             let groups = match state.window_cache.get_groups(&cache_key) {
@@ -687,34 +700,43 @@ impl PhysicalExpr for WindowExpr {
             .collect::<PolarsResult<Vec<_>>>()?;
         let order_by = match &self.order_by {
             None => None,
-            Some((e, options)) => {
-                let mut e = e.evaluate(df, state)?;
-                if e.len() == 1 {
-                    e = e.new_from_index(0, length_preserving_height);
-                }
-                // Sanity check: Length Preserving.
-                assert_eq!(e.len(), length_preserving_height);
-                let arr: Option<PrimitiveArray<IdxSize>> = if needs_remap_to_rows {
-                    feature_gated!("rank", {
-                        // Performance: precompute the rank here, so we can avoid dispatching per group
-                        // later.
-                        use polars_ops::series::SeriesRank;
-                        let arr = e.as_materialized_series().rank(
-                            RankOptions {
-                                method: RankMethod::Ordinal,
-                                descending: false,
-                            },
-                            None,
-                        );
-                        let arr = arr.idx()?;
-                        let arr = arr.rechunk();
-                        Some(arr.downcast_as_array().clone())
+            Some((exprs, options)) => {
+                let mut cols: Vec<Column> = exprs
+                    .iter()
+                    .map(|e| {
+                        let mut c = e.evaluate(df, state)?;
+                        if c.len() == 1 {
+                            c = c.new_from_index(0, length_preserving_height);
+                        }
+                        // Sanity check: Length Preserving.
+                        assert_eq!(c.len(), length_preserving_height);
+                        Ok(c)
                     })
-                } else {
-                    None
-                };
+                    .collect::<PolarsResult<_>>()?;
 
-                Some((e.clone(), arr, *options))
+                // Performance: for the single-column case precompute the rank so we can
+                // avoid dispatching per group later. For multiple columns this would
+                // require a more complex combined rank, so we fall back to per-group sort.
+                let arr: Option<PrimitiveArray<IdxSize>> =
+                    if needs_remap_to_rows && cols.len() == 1 {
+                        feature_gated!("rank", {
+                            use polars_ops::series::SeriesRank;
+                            let arr = cols[0].as_materialized_series().rank(
+                                RankOptions {
+                                    method: RankMethod::Ordinal,
+                                    descending: false,
+                                },
+                                None,
+                            );
+                            let arr = arr.idx()?;
+                            let arr = arr.rechunk();
+                            Some(arr.downcast_as_array().clone())
+                        })
+                    } else {
+                        None
+                    };
+
+                Some((cols, arr, options.clone()))
             },
         };
 
@@ -818,57 +840,90 @@ impl PhysicalExpr for WindowExpr {
                     // efficient kernels, we can now relatively efficient arg_sort per group. This
                     // is still horrendously slow, but at least not as bad as it would be if you
                     // did this naively.
-                    if needs_remap_to_rows && let Some((_, arr, options)) = &order_by {
-                        let arr = arr.as_ref().unwrap();
+                    if needs_remap_to_rows && let Some((cols, arr, options)) = &order_by {
                         amort_arg_sort.clear();
                         amort_arg_sort.extend(0..$iter.len() as IdxSize);
-                        match arr.validity() {
-                            None => {
-                                let arr = arr.values().as_slice();
-                                amort_arg_sort.sort_by(|a, b| {
-                                    let in_group_idx_a = $get(*a as usize) as usize;
-                                    let in_group_idx_b = $get(*b as usize) as usize;
 
-                                    let order_a = unsafe { arr.get_unchecked(in_group_idx_a) };
-                                    let order_b = unsafe { arr.get_unchecked(in_group_idx_b) };
+                        if let Some(arr) = arr {
+                            // Single-column fast path: use precomputed ordinal ranks.
+                            let descending = options.descending.first().copied().unwrap_or(false);
+                            let nulls_last = options.nulls_last.first().copied().unwrap_or(false);
+                            match arr.validity() {
+                                None => {
+                                    let arr = arr.values().as_slice();
+                                    amort_arg_sort.sort_by(|a, b| {
+                                        let in_group_idx_a = $get(*a as usize) as usize;
+                                        let in_group_idx_b = $get(*b as usize) as usize;
 
-                                    let mut cmp = order_a.cmp(&order_b);
-                                    // Performance: This can generally be handled branchlessly.
-                                    if options.descending {
-                                        cmp = cmp.reverse();
-                                    }
-                                    cmp
-                                });
-                            },
-                            Some(validity) => {
-                                let arr = arr.values().as_slice();
-                                amort_arg_sort.sort_by(|a, b| {
-                                    let in_group_idx_a = $get(*a as usize) as usize;
-                                    let in_group_idx_b = $get(*b as usize) as usize;
+                                        let order_a = unsafe { arr.get_unchecked(in_group_idx_a) };
+                                        let order_b = unsafe { arr.get_unchecked(in_group_idx_b) };
 
-                                    let is_valid_a =
-                                        unsafe { validity.get_bit_unchecked(in_group_idx_a) };
-                                    let is_valid_b =
-                                        unsafe { validity.get_bit_unchecked(in_group_idx_b) };
-
-                                    if !(is_valid_a & is_valid_b) {
-                                        let mut cmp = is_valid_a.cmp(&is_valid_b);
-                                        if options.nulls_last {
+                                        let mut cmp = order_a.cmp(&order_b);
+                                        // Performance: This can generally be handled branchlessly.
+                                        if descending {
                                             cmp = cmp.reverse();
                                         }
-                                        return cmp;
-                                    }
+                                        cmp
+                                    });
+                                },
+                                Some(validity) => {
+                                    let arr = arr.values().as_slice();
+                                    amort_arg_sort.sort_by(|a, b| {
+                                        let in_group_idx_a = $get(*a as usize) as usize;
+                                        let in_group_idx_b = $get(*b as usize) as usize;
 
-                                    let order_a = unsafe { arr.get_unchecked(in_group_idx_a) };
-                                    let order_b = unsafe { arr.get_unchecked(in_group_idx_b) };
+                                        let is_valid_a =
+                                            unsafe { validity.get_bit_unchecked(in_group_idx_a) };
+                                        let is_valid_b =
+                                            unsafe { validity.get_bit_unchecked(in_group_idx_b) };
 
-                                    let mut cmp = order_a.cmp(&order_b);
-                                    if options.descending {
-                                        cmp = cmp.reverse();
-                                    }
-                                    cmp
-                                });
-                            },
+                                        if !(is_valid_a & is_valid_b) {
+                                            let mut cmp = is_valid_a.cmp(&is_valid_b);
+                                            if nulls_last {
+                                                cmp = cmp.reverse();
+                                            }
+                                            return cmp;
+                                        }
+
+                                        let order_a = unsafe { arr.get_unchecked(in_group_idx_a) };
+                                        let order_b = unsafe { arr.get_unchecked(in_group_idx_b) };
+
+                                        let mut cmp = order_a.cmp(&order_b);
+                                        if descending {
+                                            cmp = cmp.reverse();
+                                        }
+                                        cmp
+                                    });
+                                },
+                            }
+                        } else {
+                            // Multi-column path: gather per-group data and arg_sort_multiple.
+                            let group_len = $iter.len();
+                            let group_global_indices: Vec<IdxSize> =
+                                (0..group_len).map(|i| $get(i)).collect();
+                            let group_sort_cols: Vec<Column> = cols
+                                .iter()
+                                .map(|c| {
+                                    Column::from(unsafe {
+                                        c.take_slice_unchecked(&group_global_indices)
+                                    })
+                                })
+                                .collect();
+                            let sort_opts = SortMultipleOptions {
+                                descending: options.descending.clone(),
+                                nulls_last: options.nulls_last.clone(),
+                                multithreaded: false,
+                                maintain_order: false,
+                                limit: None,
+                            };
+                            let sorted = group_sort_cols[0]
+                                .as_materialized_series()
+                                .arg_sort_multiple(&group_sort_cols[1..], &sort_opts)
+                                .unwrap();
+                            let sorted = sorted.rechunk();
+                            amort_arg_sort.clear();
+                            amort_arg_sort
+                                .extend(sorted.downcast_as_array().values_iter().copied());
                         }
 
                         amort_offsets.clear();
@@ -943,9 +998,17 @@ impl PhysicalExpr for WindowExpr {
         }
 
         let mut subgroups = GroupsType::Idx(subgroups.into());
-        if let Some((order_by, _, options)) = order_by {
-            subgroups =
-                update_groups_sort_by(&subgroups, order_by.as_materialized_series(), &options)?;
+        if let Some((cols, _, options)) = order_by {
+            let series_vec: Vec<Series> = cols
+                .iter()
+                .map(|c| c.as_materialized_series().rechunk())
+                .collect();
+            subgroups = update_groups_sort_by_multiple(
+                &subgroups,
+                &series_vec,
+                &options.descending,
+                &options.nulls_last,
+            )?;
         }
         let subgroups = subgroups.into_sliceable();
         let mut data = self

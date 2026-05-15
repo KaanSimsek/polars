@@ -623,8 +623,8 @@ impl PyExpr {
         &self,
         partition_by: Option<Vec<Self>>,
         order_by: Option<Vec<Self>>,
-        order_by_descending: bool,
-        order_by_nulls_last: bool,
+        order_by_descending: Vec<bool>,
+        order_by_nulls_last: Vec<bool>,
         mapping_strategy: Wrap<WindowMapping>,
     ) -> PyResult<Self> {
         let partition_by = partition_by.map(|partition_by| {
@@ -635,13 +635,24 @@ impl PyExpr {
         });
 
         let order_by = order_by.map(|order_by| {
+            let descending = if order_by_descending.is_empty() {
+                vec![false]
+            } else {
+                order_by_descending.clone()
+            };
+            let nulls_last = if order_by_nulls_last.is_empty() {
+                vec![false]
+            } else {
+                order_by_nulls_last.clone()
+            };
             (
                 order_by.into_iter().map(|e| e.inner).collect::<Vec<Expr>>(),
-                SortOptions {
-                    descending: order_by_descending,
-                    nulls_last: order_by_nulls_last,
+                SortMultipleOptions {
+                    descending,
+                    nulls_last,
                     maintain_order: false,
-                    ..Default::default()
+                    multithreaded: true,
+                    limit: None,
                 },
             )
         });

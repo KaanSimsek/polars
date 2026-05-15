@@ -443,8 +443,12 @@ pub(super) fn to_aexpr_impl(
             mapping,
         } => {
             let (function, output_name) = recurse_arc!(function)?;
-            let order_by = if let Some((e, options)) = order_by {
-                Some((recurse_arc!(e)?.0, options))
+            let order_by = if let Some((exprs, options)) = order_by {
+                let nodes = exprs
+                    .into_iter()
+                    .map(|e| Ok(to_aexpr_impl_materialized_lit(e, ctx)?.0))
+                    .collect::<PolarsResult<Vec<Node>>>()?;
+                Some((nodes, options))
             } else {
                 None
             };

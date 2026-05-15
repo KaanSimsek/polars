@@ -260,7 +260,7 @@ pub enum AExpr {
     Over {
         function: Node,
         partition_by: Vec<Node>,
-        order_by: Option<(Node, SortOptions)>,
+        order_by: Option<(Vec<Node>, SortMultipleOptions)>,
         mapping: WindowMapping,
     },
     #[cfg(feature = "dynamic_group_by")]

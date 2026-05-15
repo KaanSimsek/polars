@@ -196,12 +196,15 @@ fn create_physical_expr_inner(
 
             let mut order_by_is_elementwise = false;
             let order_by = order_by
-                .map(|(node, options)| {
-                    order_by_is_elementwise |= is_elementwise_rec(node, expr_arena);
-                    PolarsResult::Ok((
-                        create_physical_expr_inner(node, expr_arena, schema, state)?,
-                        options,
-                    ))
+                .map(|(nodes, options)| {
+                    let phys_exprs = nodes
+                        .iter()
+                        .map(|&node| {
+                            order_by_is_elementwise |= is_elementwise_rec(node, expr_arena);
+                            create_physical_expr_inner(node, expr_arena, schema, state)
+                        })
+                        .collect::<PolarsResult<Vec<_>>>()?;
+                    PolarsResult::Ok((phys_exprs, options))
                 })
                 .transpose()?;
 

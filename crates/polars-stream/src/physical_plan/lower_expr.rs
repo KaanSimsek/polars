@@ -263,7 +263,9 @@ pub fn is_input_independent_rec(
                     .all(|expr| is_input_independent_rec(*expr, arena, cache))
                 && order_by
                     .iter()
-                    .all(|(expr, _options)| is_input_independent_rec(*expr, arena, cache))
+                    .all(|(exprs, _options)| {
+                        exprs.iter().all(|expr| is_input_independent_rec(*expr, arena, cache))
+                    })
         },
         AExpr::Slice {
             input,

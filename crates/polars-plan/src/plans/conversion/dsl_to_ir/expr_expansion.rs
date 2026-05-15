@@ -765,12 +765,13 @@ fn expand_expression_rec(
             order_by,
             mapping,
         } => {
+            let order_by_len = order_by.as_ref().map_or(0, |(v, _)| v.len());
             let mut exprs =
-                Vec::with_capacity(partition_by.len() + 1 + usize::from(order_by.is_some()));
+                Vec::with_capacity(partition_by.len() + 1 + order_by_len);
             exprs.push(function.as_ref().clone());
             exprs.extend(partition_by.iter().cloned());
-            if let Some((e, _)) = &order_by {
-                exprs.push(e.as_ref().clone());
+            if let Some((order_exprs, _)) = &order_by {
+                exprs.extend(order_exprs.iter().cloned());
             }
             _ = expand_expression_by_combination(
                 &exprs,
@@ -778,13 +779,16 @@ fn expand_expression_rec(
                 schema,
                 out,
                 opt_flags,
-                |e| Expr::Over {
-                    function: Arc::new(e[0].clone()),
-                    partition_by: e[1..e.len() - usize::from(order_by.is_some())].to_vec(),
-                    order_by: order_by
-                        .as_ref()
-                        .map(|(_, options)| (Arc::new(e.last().unwrap().clone()), *options)),
-                    mapping: *mapping,
+                |e| {
+                    let partition_end = 1 + partition_by.len();
+                    Expr::Over {
+                        function: Arc::new(e[0].clone()),
+                        partition_by: e[1..partition_end].to_vec(),
+                        order_by: order_by.as_ref().map(|(_, options)| {
+                            (e[partition_end..].to_vec(), options.clone())
+                        }),
+                        mapping: *mapping,
+                    }
                 },
             )?
         },

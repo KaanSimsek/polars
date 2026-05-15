@@ -67,7 +67,9 @@ impl AExpr {
             } => {
                 container.extend([*function]);
                 container.extend(partition_by.iter().cloned());
-                container.extend(order_by.as_ref().map(|(n, _)| *n));
+                if let Some((nodes, _)) = order_by {
+                    container.extend(nodes.iter().cloned());
+                }
             },
             Eval {
                 expr,
@@ -153,8 +155,8 @@ impl AExpr {
                 order_by,
                 mapping: _,
             } => {
-                if let Some((n, _)) = order_by {
-                    container.extend([*n]);
+                if let Some((nodes, _)) = order_by {
+                    container.extend(nodes.iter().rev().cloned());
                 }
                 container.extend(partition_by.iter().rev().cloned());
                 container.extend([*function]);
@@ -269,8 +271,8 @@ impl AExpr {
                 order_by,
                 mapping: _,
             } => {
-                if let Some((n, _)) = order_by {
-                    container.extend([*n]);
+                if let Some((nodes, _)) = order_by {
+                    container.extend(nodes.iter().rev().cloned());
                 }
                 container.extend(partition_by.iter().rev().cloned());
                 container.extend([*function]);
@@ -391,12 +393,13 @@ impl AExpr {
                 order_by,
                 ..
             } => {
-                let offset = order_by.is_some() as usize;
+                let order_by_len = order_by.as_ref().map_or(0, |(nodes, _)| nodes.len());
                 *function = inputs[0];
                 partition_by.clear();
-                partition_by.extend_from_slice(&inputs[1..inputs.len() - offset]);
-                if let Some((_, options)) = order_by {
-                    *order_by = Some((*inputs.last().unwrap(), *options));
+                partition_by.extend_from_slice(&inputs[1..inputs.len() - order_by_len]);
+                if let Some((order_by_nodes, _)) = order_by {
+                    let new_nodes = inputs[inputs.len() - order_by_len..].to_vec();
+                    *order_by_nodes = new_nodes;
                 }
                 return self;
             },
@@ -504,12 +507,13 @@ impl AExpr {
                 order_by,
                 ..
             } => {
-                let offset = order_by.is_some() as usize;
+                let order_by_len = order_by.as_ref().map_or(0, |(nodes, _)| nodes.len());
                 *function = inputs[0];
                 partition_by.clear();
-                partition_by.extend_from_slice(&inputs[1..inputs.len() - offset]);
-                if let Some((_, options)) = order_by {
-                    *order_by = Some((*inputs.last().unwrap(), *options));
+                partition_by.extend_from_slice(&inputs[1..inputs.len() - order_by_len]);
+                if let Some((order_by_nodes, _)) = order_by {
+                    let new_nodes = inputs[inputs.len() - order_by_len..].to_vec();
+                    *order_by_nodes = new_nodes;
                 }
                 return self;
             },

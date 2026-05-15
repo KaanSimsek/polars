@@ -689,6 +689,44 @@ def test_window_order_by_8662() -> None:
     }
 
 
+def test_window_order_by_per_column_descending_23389() -> None:
+    # Verify that descending=[False, True] applies per-column sort directions,
+    # equivalent to SQL: lag(a) OVER (ORDER BY i0 ASC, i1 DESC)
+    df = pl.DataFrame(
+        {
+            "g": [1, 1, 1, 1],
+            "i0": [1, 1, 2, 2],
+            "i1": [2, 1, 2, 1],
+            "a": [10, 20, 30, 40],
+        }
+    )
+
+    # order_by=["i0", "i1"], descending=[False, True]  => sorted order: (1,2),(1,1),(2,2),(2,1)
+    # which corresponds to rows 0,1,2,3 already; shift(1) => [null, 10, 20, 30]
+    result = df.with_columns(
+        pl.col("a").shift(1).over("g", order_by=["i0", "i1"], descending=[False, True])
+    )
+    assert result["a"].to_list() == [None, 10, 20, 30]
+
+    # order_by=["i0", "i1"], descending=[True, False] => sorted order: (2,1),(2,2),(1,1),(1,2)
+    # which corresponds to rows 3,2,1,0; shift(1) => [null, 40, 30, 20] mapped back to original rows:
+    # row 0 (i0=1,i1=2) is 4th in sorted order => shift(1) gives 30
+    # row 1 (i0=1,i1=1) is 3rd => shift(1) gives 40 (wrong - let me compute correctly)
+    # sorted order positions (0-indexed): pos0=row3, pos1=row2, pos2=row1, pos3=row0
+    # shift(1): pos0->None, pos1->a[pos0]=40, pos2->a[pos1]=30, pos3->a[pos2]=20
+    # mapped back to original rows: row0 is at pos3 => 20, row1 at pos2 => 30, row2 at pos1 => 40, row3 at pos0 => None
+    result2 = df.with_columns(
+        pl.col("a").shift(1).over("g", order_by=["i0", "i1"], descending=[True, False])
+    )
+    assert result2["a"].to_list() == [20, 30, 40, None]
+
+    # Scalar bool still works (broadcast to all columns)
+    result3 = df.with_columns(
+        pl.col("a").shift(1).over("g", order_by=["i0", "i1"], descending=False)
+    )
+    assert result3["a"].to_list() == [None, 10, 20, 30]
+
+
 def test_window_chunked_std_17102() -> None:
     c1 = pl.DataFrame({"A": [1, 1], "B": [1.0, 2.0]})
     c2 = pl.DataFrame({"A": [2, 2], "B": [1.0, 2.0]})

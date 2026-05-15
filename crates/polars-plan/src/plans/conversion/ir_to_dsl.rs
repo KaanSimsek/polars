@@ -268,8 +268,9 @@ pub fn node_to_expr(node: Node, expr_arena: &Arena<AExpr>) -> Expr {
         } => {
             let function = Arc::new(node_to_expr(function, expr_arena));
             let partition_by = nodes_to_exprs(&partition_by, expr_arena);
-            let order_by =
-                order_by.map(|(n, options)| (Arc::new(node_to_expr(n, expr_arena)), options));
+            let order_by = order_by.map(|(nodes, options)| {
+                (nodes_to_exprs(&nodes, expr_arena), options)
+            });
             Expr::Over {
                 function,
                 partition_by,

@@ -3945,8 +3945,8 @@ class Expr:
         partition_by: IntoExpr | Iterable[IntoExpr] | None = None,
         *more_exprs: IntoExpr,
         order_by: IntoExpr | Iterable[IntoExpr] | None = None,
-        descending: bool = False,
-        nulls_last: bool = False,
+        descending: bool | Sequence[bool] = False,
+        nulls_last: bool | Sequence[bool] = False,
         mapping_strategy: WindowMappingStrategy = "group_to_rows",
     ) -> Expr:
         """
@@ -3972,10 +3972,12 @@ class Expr:
             :func:`cum_sum` or :func:`diff`.
         descending
             In case 'order_by' is given, indicate whether to order in
-            ascending or descending order.
+            ascending or descending order. Can be a single boolean (applied
+            to all columns) or a list of booleans (one per column).
         nulls_last
             In case 'order_by' is given, indicate whether to order
-            the nulls in last position.
+            the nulls in last position. Can be a single boolean (applied
+            to all columns) or a list of booleans (one per column).
         mapping_strategy: {'group_to_rows', 'join', 'explode'}
             - group_to_rows
                 If the aggregation results in multiple values per group, map them back
@@ -4159,12 +4161,19 @@ class Expr:
         else:
             order_by_pyexprs = None
 
+        descending_list: list[bool] = (
+            [descending] if isinstance(descending, bool) else list(descending)
+        )
+        nulls_last_list: list[bool] = (
+            [nulls_last] if isinstance(nulls_last, bool) else list(nulls_last)
+        )
+
         return wrap_expr(
             self._pyexpr.over(
                 partition_by_pyexprs,
                 order_by=order_by_pyexprs,
-                order_by_descending=descending,
-                order_by_nulls_last=nulls_last,
+                order_by_descending=descending_list,
+                order_by_nulls_last=nulls_last_list,
                 mapping_strategy=mapping_strategy,
             )
         )

@@ -187,12 +187,17 @@ fn execute_projection_cached_window_fns(
                     } => {
                         let mapping: &str = mapping.into();
                         let mut key = format!("{:?}_{mapping}", partition_by.as_slice());
-                        if let Some((e, k)) = order_by {
-                            polars_expr::prelude::window_function_format_order_by(
-                                &mut key,
-                                e.as_ref(),
-                                k,
-                            )
+                        if let Some((exprs, options)) = order_by {
+                            for (i, e) in exprs.iter().enumerate() {
+                                let descending = options.descending.get(i).or_else(|| options.descending.first()).copied().unwrap_or(false);
+                                let nulls_last = options.nulls_last.get(i).or_else(|| options.nulls_last.first()).copied().unwrap_or(false);
+                                polars_expr::prelude::window_function_format_order_by(
+                                    &mut key,
+                                    e,
+                                    descending,
+                                    nulls_last,
+                                );
+                            }
                         }
                         let entry = windows.entry(key).or_insert_with(Vec::new);
                         entry.push((index, phys.clone()));
