@@ -721,10 +721,12 @@ def test_window_order_by_per_column_descending_23389() -> None:
     assert result2["a"].to_list() == [20, 30, 40, None]
 
     # Scalar bool still works (broadcast to all columns)
+    # descending=False => [False, False] => sort (i0 ASC, i1 ASC): row1,row0,row3,row2
+    # shift(1) => [None, 20, 10, 40]; mapped back: row0->20, row1->None, row2->40, row3->10
     result3 = df.with_columns(
         pl.col("a").shift(1).over("g", order_by=["i0", "i1"], descending=False)
     )
-    assert result3["a"].to_list() == [None, 10, 20, 30]
+    assert result3["a"].to_list() == [20, None, 40, 10]
 
 
 def test_window_chunked_std_17102() -> None:
