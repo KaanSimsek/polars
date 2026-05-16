@@ -4161,11 +4161,12 @@ class Expr:
         else:
             order_by_pyexprs = None
 
+        n_order = len(order_by_pyexprs) if order_by_pyexprs is not None else 1
         descending_list: list[bool] = (
-            [descending] if isinstance(descending, bool) else list(descending)
+            [descending] * n_order if isinstance(descending, bool) else list(descending)
         )
         nulls_last_list: list[bool] = (
-            [nulls_last] if isinstance(nulls_last, bool) else list(nulls_last)
+            [nulls_last] * n_order if isinstance(nulls_last, bool) else list(nulls_last)
         )
 
         return wrap_expr(

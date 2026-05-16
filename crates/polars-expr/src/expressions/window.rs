@@ -701,7 +701,7 @@ impl PhysicalExpr for WindowExpr {
         let order_by = match &self.order_by {
             None => None,
             Some((exprs, options)) => {
-                let mut cols: Vec<Column> = exprs
+                let cols: Vec<Column> = exprs
                     .iter()
                     .map(|e| {
                         let mut c = e.evaluate(df, state)?;

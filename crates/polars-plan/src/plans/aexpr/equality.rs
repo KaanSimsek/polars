@@ -1,4 +1,4 @@
-use polars_core::prelude::{SortMultipleOptions, SortOptions};
+use polars_core::prelude::SortMultipleOptions;
 use polars_utils::arena::{Arena, Node};
 
 use super::{AExpr, IRAggExpr};
