@@ -1,6 +1,7 @@
 //! Implementation of applying the operations during execution.
 use std::sync::Arc;
 
+use polars_core::chunked_array::cast::CastOptions;
 use polars_core::frame::DataFrame;
 use polars_core::prelude::{AnyValue, Column, DataType};
 use polars_core::scalar::Scalar;
@@ -15,6 +16,7 @@ use polars_utils::slice_enum::Slice;
 
 use crate::nodes::io_sources::multi_scan::components::column_selector::ColumnSelector;
 use crate::nodes::io_sources::multi_scan::components::column_selector::builder::ColumnSelectorBuilder;
+use crate::nodes::io_sources::multi_scan::components::column_selector::transform::ColumnTransform;
 use crate::nodes::io_sources::multi_scan::components::errors::missing_column_err;
 use crate::nodes::io_sources::multi_scan::components::projection::Projection;
 use crate::nodes::io_sources::multi_scan::components::row_deletions::ExternalFilterMask;
@@ -112,7 +114,7 @@ impl ApplyExtraOps {
                     final_output_schema.iter().enumerate()
                 {
                     let selector = if output_index == file_path_col_idx {
-                        ColumnSelector::Constant(Box::new((
+                        let file_path_selector = ColumnSelector::Constant(Box::new((
                             include_file_paths.clone().unwrap(),
                             Scalar::new(
                                 DataType::String,
@@ -123,7 +125,17 @@ impl ApplyExtraOps {
                                         .into(),
                                 ),
                             ),
-                        )))
+                        )));
+
+                        if matches!(output_dtype, DataType::String) {
+                            file_path_selector
+                        } else {
+                            ColumnTransform::Cast {
+                                dtype: output_dtype.clone(),
+                                options: CastOptions::NonStrict,
+                            }
+                            .into_selector(file_path_selector)
+                        }
                     } else if output_index == row_index_col_idx {
                         if let Some(ri) = &row_index {
                             // Row index is done by us (ApplyExtraOps). Insert a placeholder column.

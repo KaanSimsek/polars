@@ -23,7 +23,7 @@ from tests.unit.io.conftest import format_file_uri, normalize_path_separator_pl
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from polars._typing import SchemaDict
+    from polars._typing import EngineType, SchemaDict
     from tests.conftest import PlMonkeyPatch
 
 
@@ -681,6 +681,42 @@ def test_scan_include_file_paths(
         lf.head(0).collect(engine="streaming" if streaming else "in-memory"),
         df.head(0),
     )
+
+
+@pytest.mark.write_disk
+@pytest.mark.parametrize("engine", ["in-memory", "streaming"])
+def test_csv_include_file_paths_schema_override(
+    tmp_path: Path, engine: EngineType
+) -> None:
+    paths = []
+    for i in range(2):
+        path = tmp_path / f"{i}.csv"
+        path.write_text("a,b\n1,2\n")
+        paths.append(path)
+
+    schema_overrides = {"a": pl.UInt8, "source": pl.Categorical}
+    expected = pl.DataFrame(
+        {
+            "a": pl.Series([1, 3], dtype=pl.UInt8),
+            "b": [2, 4],
+            "source": [str(p) for p in paths],
+        }
+    ).with_columns(normalize_path_separator_pl(pl.col("source")).cast(pl.Categorical))
+
+    df = pl.read_csv(
+        paths,
+        include_file_paths="source",
+        schema_overrides=schema_overrides,
+    )
+    assert_frame_equal(df, expected)
+
+    lf = pl.scan_csv(
+        paths,
+        include_file_paths="source",
+        schema_overrides=schema_overrides,
+    )
+    assert lf.collect_schema() == expected.schema
+    assert_frame_equal(lf.collect(engine=engine), expected)
 
 
 @pytest.mark.write_disk

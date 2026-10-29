@@ -22,6 +22,14 @@ use crate::plans::parquet_footers::{
     select_footer_indices,
 };
 
+fn include_file_paths_dtype(scan_type: &FileScanDsl, name: &str) -> Option<DataType> {
+    match scan_type {
+        #[cfg(feature = "csv")]
+        FileScanDsl::Csv { options } => options.schema_overwrite.as_ref()?.get(name).cloned(),
+        _ => None,
+    }
+}
+
 pub(super) async fn dsl_to_ir(
     sources: ScanSources,
     mut unified_scan_args_box: Box<UnifiedScanArgs>,
@@ -190,7 +198,10 @@ pub(super) async fn dsl_to_ir(
                 );
             }
 
-            schema.insert_at_index(schema.len(), file_path_col.clone(), DataType::String)?;
+            let dtype = include_file_paths_dtype(scan_type.as_ref(), file_path_col)
+                .unwrap_or(DataType::String);
+
+            schema.insert_at_index(schema.len(), file_path_col.clone(), dtype)?;
         }
 
         unified_scan_args.projection = if let Some(file_schema) = file_info.reader_schema.as_ref() {
